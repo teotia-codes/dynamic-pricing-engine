@@ -1,42 +1,37 @@
-import time
 import requests
 from core.db import get_connection, release_connection
+from backend.app.logger import logger
 
-# region_id -> (lat, lon, label)
+# Map your region_name from DB -> (latitude, longitude, city)
 REGION_COORDS = {
-    1: (28.6315, 77.2167, "Connaught Place, Delhi"),
-    2: (28.5708, 77.3260, "Sector 18, Noida"),
-    3: (28.4959, 77.0890, "Cyber Hub, Gurgaon"),
-    4: (12.9116, 77.6474, "HSR Layout, Bengaluru"),
-    5: (19.1364, 72.8276, "Andheri West, Mumbai"),
+    "Connaught Place": (28.6315, 77.2167, "Delhi"),
+    "Sector 18": (28.5708, 77.3260, "Noida"),
+    "Cyber Hub": (28.4959, 77.0890, "Gurgaon"),
+    "HSR Layout": (12.9116, 77.6474, "Bengaluru"),
+    "Andheri West": (19.1364, 72.8276, "Mumbai"),
 }
 
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 2
 
-def map_weather_code(weather_code):
+def map_weather_code(weather_code: int) -> str:
+    """
+    Convert Open-Meteo weather codes into simplified pricing categories.
+    """
     if weather_code in [0, 1]:
         return "Clear"
     elif weather_code in [2, 3]:
         return "Cloudy"
-    elif weather_code in [51, 53, 55, 61, 63, 65]:
+    elif weather_code in [45, 48]:
+        return "Fog"
+    elif weather_code in [51, 53, 55]:
+        return "Drizzle"
+    elif weather_code in [61, 63]:
         return "Rain"
-    elif weather_code in [66, 67, 80, 81, 82]:
+    elif weather_code in [65, 80, 81, 82]:
         return "Heavy Rain"
     elif weather_code in [95, 96, 99]:
-        return "Storm"
-    return "Unknown"
-
-
-def log_ingestion_error(cur, source_name, region_id, error_message):
-    cur.execute("""
-        INSERT INTO ingestion_errors (
-            source_name,
-            region_id,
-            error_message
-        )
-        VALUES (%s, %s, %s)
-    """, (source_name, region_id, error_message))
+        return "Thunderstorm"
+    else:
+        return "Clear"
 
 
 def fetch_weather():
@@ -45,72 +40,73 @@ def fetch_weather():
     try:
         cur = conn.cursor()
 
-        for region_id, (lat, lon, label) in REGION_COORDS.items():
+        # Read actual regions from DB so your code stays dynamic
+        cur.execute("SELECT region_id, region_name FROM regions ORDER BY region_id;")
+        regions = cur.fetchall()
+
+        for region_id, region_name in regions:
+            if region_name not in REGION_COORDS:
+                logger.warning(f"No weather coordinates configured for region={region_name}")
+                continue
+
+            lat, lon, city = REGION_COORDS[region_name]
+
             url = (
                 f"https://api.open-meteo.com/v1/forecast"
                 f"?latitude={lat}&longitude={lon}"
                 f"&current=temperature_2m,precipitation,weather_code"
             )
 
-            success = False
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
 
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    response = requests.get(url, timeout=10)
-                    response.raise_for_status()
-                    data = response.json()
+                current = data.get("current", {})
+                temperature_c = float(current.get("temperature_2m", 25.0))
+                rain_mm = float(current.get("precipitation", 0.0))
+                weather_code = int(current.get("weather_code", 0))
 
-                    current = data.get("current", {})
-                    temperature_c = current.get("temperature_2m", 25.0)
-                    rain_mm = current.get("precipitation", 0.0)
-                    weather_code = current.get("weather_code", 0)
+                weather_condition = map_weather_code(weather_code)
 
-                    weather_condition = map_weather_code(weather_code)
-
-                    cur.execute("""
-                        INSERT INTO weather_events (
-                            region_id,
-                            temperature_c,
-                            rain_mm,
-                            weather_condition
-                        )
-                        VALUES (%s, %s, %s, %s)
-                    """, (
+                cur.execute(
+                    """
+                    INSERT INTO weather_events (
                         region_id,
                         temperature_c,
                         rain_mm,
                         weather_condition
-                    ))
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        region_id,
+                        temperature_c,
+                        rain_mm,
+                        weather_condition,
+                    ),
+                )
 
-                    print(f"✅ Weather inserted for {label}: {weather_condition}, {temperature_c}°C")
-                    success = True
-                    break
+                logger.info(
+                    f"Weather inserted | region={region_name} | city={city} | "
+                    f"condition={weather_condition} | temp={temperature_c}C | rain={rain_mm}mm"
+                )
 
-                except Exception as e:
-                    print(f"⚠️ Attempt {attempt}/{MAX_RETRIES} failed for {label}: {e}")
-
-                    if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY_SECONDS)
-                    else:
-                        log_ingestion_error(
-                            cur,
-                            "weather_fetcher",
-                            region_id,
-                            str(e)
-                        )
-                        print(f"❌ Logged weather fetch failure for {label}")
-
-            if not success:
-                print(f"❌ Final failure for {label} after {MAX_RETRIES} attempts")
+            except requests.RequestException as e:
+                logger.warning(
+                    f"Weather API request failed | region={region_name} | city={city} | error={e}"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"Unexpected weather processing error | region={region_name} | city={city} | error={e}"
+                )
 
         conn.commit()
         cur.close()
 
-    except Exception as e:
-        print(f"❌ Error in fetch_weather: {e}")
-
     finally:
         release_connection(conn)
+
 
 if __name__ == "__main__":
     fetch_weather()

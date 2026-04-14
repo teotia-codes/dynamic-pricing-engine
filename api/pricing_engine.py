@@ -4,70 +4,165 @@ from core.config import PRICING_CONFIG, PLATFORMS
 from backend.app.logger import logger
 
 
+# =========================
+# Core Multiplier Helpers
+# =========================
+
 def get_peak_multiplier(platform_id):
     hour = datetime.now().hour
     peak_windows = PRICING_CONFIG["peak_hours"].get(platform_id, [])
 
     for window in peak_windows:
         if window["start"] <= hour <= window["end"]:
-            return window["multiplier"]
+            return float(window["multiplier"])
 
     return 1.00
 
 
 def get_base_fee(platform_id):
-    return PRICING_CONFIG["base_fee"].get(platform_id, 25.0)
+    return float(PRICING_CONFIG["base_fee"].get(platform_id, 25.0))
 
 
 def get_platform_multiplier(platform_id):
-    return PRICING_CONFIG["platform_multiplier"].get(platform_id, 1.00)
+    return float(PRICING_CONFIG["platform_multiplier"].get(platform_id, 1.00))
 
 
-def get_demand_supply_multiplier(ratio):
-    for threshold in PRICING_CONFIG["demand_supply_thresholds"]:
-        if ratio < threshold["max_ratio"]:
-            return threshold["multiplier"]
-    return 1.00
+def get_demand_supply_multiplier(normalized_ratio):
+    """
+    More realistic multiplier curve:
+    ratio ~ 1.0 means balanced
+    ratio < 1.0 means enough supply
+    ratio > 1.0 means growing surge
+    """
+
+    if normalized_ratio <= 0.85:
+        return 0.95
+    elif normalized_ratio <= 1.05:
+        return 1.00
+    elif normalized_ratio <= 1.25:
+        return 1.08
+    elif normalized_ratio <= 1.50:
+        return 1.18
+    elif normalized_ratio <= 1.80:
+        return 1.30
+    elif normalized_ratio <= 2.20:
+        return 1.45
+    elif normalized_ratio <= 2.80:
+        return 1.60
+    else:
+        return 1.75
 
 
 def get_weather_multiplier(weather_condition):
-    return PRICING_CONFIG["weather_multiplier"].get(weather_condition, 1.00)
+    """
+    Uses config if available, but safely normalizes to realistic caps.
+    """
+    config_value = float(PRICING_CONFIG["weather_multiplier"].get(weather_condition, 1.00))
+
+    # Prevent over-aggressive weather surge
+    return min(max(config_value, 1.00), 1.15)
 
 
 def get_traffic_multiplier(congestion_score):
-    for threshold in PRICING_CONFIG["traffic_thresholds"]:
-        if congestion_score > threshold["min_score"]:
-            return threshold["multiplier"]
+    """
+    congestion_score expected ~0.0 to 1.0
+    smoother realistic mapping
+    """
+    if congestion_score >= 0.90:
+        return 1.20
+    elif congestion_score >= 0.75:
+        return 1.12
+    elif congestion_score >= 0.55:
+        return 1.07
+    elif congestion_score >= 0.35:
+        return 1.03
     return 1.00
 
 
 def get_busy_multiplier(platform_id, busy_score, inventory_availability):
+    """
+    Restaurant/store busyness + Blinkit inventory effect
+    """
     multiplier = 1.00
 
-    for threshold in PRICING_CONFIG["busy_thresholds"]:
-        if busy_score > threshold["min_score"]:
-            multiplier += threshold["increment"]
-            break
+    # Busy score effect
+    if busy_score >= 0.90:
+        multiplier += 0.18
+    elif busy_score >= 0.75:
+        multiplier += 0.12
+    elif busy_score >= 0.60:
+        multiplier += 0.07
+    elif busy_score >= 0.45:
+        multiplier += 0.03
 
-    if platform_id == PLATFORMS["BLINKIT"]:
-        for threshold in PRICING_CONFIG["blinkit_inventory_thresholds"]:
-            if inventory_availability < threshold["max_inventory"]:
-                multiplier += threshold["increment"]
-                break
+    # Blinkit inventory shortage effect
+    if platform_id == PLATFORMS["blinkit"]:
+        if inventory_availability <= 0.30:
+            multiplier += 0.18
+        elif inventory_availability <= 0.50:
+            multiplier += 0.10
+        elif inventory_availability <= 0.70:
+            multiplier += 0.05
 
-    return round(multiplier, 2)
+    return round(min(multiplier, 1.35), 2)
 
 
 def get_anomaly_multiplier(current_orders, historical_avg):
-    if historical_avg is None or historical_avg == 0:
+    """
+    Detect unusual spike vs historical average.
+    Keep it subtle, not explosive.
+    """
+    if historical_avg is None or historical_avg <= 0:
         return 1.00
 
-    for threshold in PRICING_CONFIG["anomaly_thresholds"]:
-        if current_orders > threshold["ratio"] * historical_avg:
-            return threshold["multiplier"]
+    spike_ratio = current_orders / historical_avg
+
+    if spike_ratio >= 2.5:
+        return 1.15
+    elif spike_ratio >= 2.0:
+        return 1.10
+    elif spike_ratio >= 1.5:
+        return 1.05
 
     return 1.00
 
+
+# =========================
+# Ratio Normalization
+# =========================
+
+def normalize_demand_supply_ratio(orders_5min, available_partners, platform_id):
+    """
+    Raw orders_5min / available_partners is too aggressive because:
+    - orders_5min is aggregated over 5 min
+    - available_partners is a snapshot
+
+    So we normalize demand to an approximate "active pressure" value.
+    """
+
+    partners = max(available_partners, 1)
+
+    # Convert 5-minute orders into approximate active dispatch pressure
+    # This softens extreme ratios while still preserving surge behavior.
+    if platform_id == PLATFORMS["blinkit"]:
+        effective_orders = max(1.0, orders_5min / 6.0)
+    else:
+        effective_orders = max(1.0, orders_5min / 4.0)
+
+    normalized_ratio = round(effective_orders / partners, 4)
+    return normalized_ratio
+
+
+def cap_final_multiplier(multiplier):
+    """
+    Hard safety cap to keep demo realistic.
+    """
+    return min(max(multiplier, 0.90), 3.20)
+
+
+# =========================
+# Data Fetch
+# =========================
 
 def fetch_latest_data(conn):
     cur = conn.cursor()
@@ -164,6 +259,10 @@ def fetch_latest_data(conn):
         cur.close()
 
 
+# =========================
+# Insert Output
+# =========================
+
 def insert_pricing_output(conn, records):
     cur = conn.cursor()
 
@@ -196,6 +295,10 @@ def insert_pricing_output(conn, records):
         cur.close()
 
 
+# =========================
+# Main Pricing Engine
+# =========================
+
 def calculate_prices():
     conn = get_connection()
 
@@ -220,7 +323,12 @@ def calculate_prices():
                 historical_avg
             ) = row
 
-            ratio = round(orders_5min / max(available_partners, 1), 4)
+            # Normalize instead of raw orders_5min / available_partners
+            ratio = normalize_demand_supply_ratio(
+                orders_5min=float(orders_5min),
+                available_partners=float(available_partners),
+                platform_id=platform_id
+            )
 
             base_fee = get_base_fee(platform_id)
             demand_supply_multiplier = get_demand_supply_multiplier(ratio)
@@ -233,7 +341,7 @@ def calculate_prices():
                 float(inventory_availability)
             )
             anomaly_multiplier = get_anomaly_multiplier(
-                orders_5min,
+                float(orders_5min),
                 float(historical_avg) if historical_avg is not None else None
             )
             platform_multiplier = get_platform_multiplier(platform_id)
@@ -249,6 +357,7 @@ def calculate_prices():
                 4
             )
 
+            final_multiplier = round(cap_final_multiplier(final_multiplier), 4)
             final_fee = round(base_fee * final_multiplier, 2)
 
             pricing_records.append((
@@ -267,9 +376,15 @@ def calculate_prices():
             ))
 
             logger.info(
-                "Calculated price | platform_id=%s region_id=%s ratio=%s final_multiplier=%s final_fee=%s",
+                (
+                    "Calculated price | platform_id=%s region_id=%s "
+                    "orders_5min=%s partners=%s normalized_ratio=%s "
+                    "final_multiplier=%s final_fee=%s"
+                ),
                 platform_id,
                 region_id,
+                orders_5min,
+                available_partners,
                 ratio,
                 final_multiplier,
                 final_fee,
