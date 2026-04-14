@@ -1,18 +1,81 @@
-version: "3.9"
-
 services:
-  timescaledb:
-    image: timescale/timescaledb:latest-pg15
-    container_name: dynamic_pricing_db
+  db:
+    image: timescale/timescaledb:latest-pg14
     restart: unless-stopped
     environment:
-      POSTGRES_DB: pricing_db
+      POSTGRES_DB: dynamic_pricing
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dynamic_pricing"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: dynamic_pricing
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      API_KEY: supersecret123
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8000:8000"
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: dynamic_pricing
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PYTHONUNBUFFERED: 1
+    command: python -m simulator.run_simulation
+    volumes:
+      - .:/app
+
+  pricing_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: dynamic_pricing
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PYTHONUNBUFFERED: 1
+    command: python -m api.run_pricing_engine
+    volumes:
+      - .:/app
 
 volumes:
   timescale_data:

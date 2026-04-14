@@ -17,6 +17,7 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+*.whl
 
 # =========================
 # Environment variables / secrets
@@ -24,12 +25,15 @@ pip-wheel-metadata/
 .env
 .env.*
 !.env.example
+!.env.template
 
 # =========================
 # Logs
 # =========================
 *.log
 logs/
+*.out
+*.err
 
 # =========================
 # Jupyter / notebooks
@@ -56,11 +60,15 @@ desktop.ini
 # =========================
 .pytest_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
+.cache/
+.mypy_cache/
+.ruff_cache/
 
 # =========================
-# Streamlit cache (optional)
+# Streamlit (legacy, optional)
 # =========================
 .streamlit/secrets.toml
 
@@ -69,6 +77,7 @@ htmlcov/
 # =========================
 *.pid
 *.sqlite3
+docker-compose.override.yml
 
 # =========================
 # Temporary files
@@ -76,3 +85,39 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+*.bak
+
+# =========================
+# React / Vite Frontend
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+
+# Frontend env files
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# =========================
+# Local DB dumps / exports
+# =========================
+*.sql.gz
+*.dump
+*.backup
+
+# =========================
+# Misc generated files
+# =========================
+*.csv
+*.parquet
+*.feather
+
+# =========================
+# Optional: ignore uploaded screenshots/assets if you keep many local refs
+# (Uncomment only if needed)
+# =========================
+# screenshots/
+# assets/tmp/

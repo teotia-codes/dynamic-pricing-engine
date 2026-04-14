@@ -1,10 +1,10 @@
 import random
 from datetime import datetime
-from simulator.db import get_connection
+from core.db import get_connection, release_connection
+
 def get_base_congestion():
     hour = datetime.now().hour
 
-    # Simulate peak hours
     if 8 <= hour <= 10:
         return random.uniform(0.6, 0.9)
     elif 12 <= hour <= 14:
@@ -16,29 +16,36 @@ def get_base_congestion():
 
 def simulate_traffic():
     conn = get_connection()
-    cur = conn.cursor()
 
-    region_ids = [1, 2, 3, 4, 5]
+    try:
+        cur = conn.cursor()
 
-    for region_id in region_ids:
-        congestion_score = round(get_base_congestion(), 2)
+        region_ids = [1, 2, 3, 4, 5]
 
-        cur.execute("""
-            INSERT INTO traffic_events (
+        for region_id in region_ids:
+            congestion_score = round(get_base_congestion(), 2)
+
+            cur.execute("""
+                INSERT INTO traffic_events (
+                    region_id,
+                    congestion_score
+                )
+                VALUES (%s, %s)
+            """, (
                 region_id,
                 congestion_score
-            )
-            VALUES (%s, %s)
-        """, (
-            region_id,
-            congestion_score
-        ))
+            ))
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
+        cur.close()
 
-    print("✅ Traffic events inserted successfully")
+        print("✅ Traffic events inserted successfully")
+
+    except Exception as e:
+        print(f"❌ Error in simulate_traffic: {e}")
+
+    finally:
+        release_connection(conn)
 
 if __name__ == "__main__":
     simulate_traffic()
