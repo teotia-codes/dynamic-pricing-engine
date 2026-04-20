@@ -44,8 +44,7 @@ import {
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
-const API_KEY =
-  import.meta.env.VITE_API_KEY || "supersecret123";
+const API_KEY = import.meta.env.VITE_API_KEY || "supersecret123";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -171,6 +170,28 @@ const fallbackPredictions = [
   },
 ];
 
+const fallbackAlerts = [
+  {
+    platform: "Swiggy",
+    region: "Andheri West",
+    city: "Mumbai",
+    alert_type: "SURGE_SPIKE",
+    message: "Surge exceeded 2.5x (current=2.78x, fee=₹69.50)",
+    severity: "HIGH",
+    created_at: new Date().toISOString(),
+  },
+  {
+    platform: "Zomato",
+    region: "Sector 18",
+    city: "Noida",
+    alert_type: "HIGH_RISK_DEMAND",
+    message:
+      "Predicted demand risk is HIGH (effective_orders_5min=185.20, ratio=3.10)",
+    severity: "MEDIUM",
+    created_at: new Date(Date.now() - 60000).toISOString(),
+  },
+];
+
 // ------------------ HELPERS ------------------
 function getMultiplierColor(value) {
   if (value >= 2.3) return "bg-red-500/90 text-white";
@@ -185,6 +206,18 @@ function getRiskBadgeClass(risk) {
     return "bg-red-500/15 text-red-300 border-red-500/30";
   }
   if (r === "medium") {
+    return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+  }
+  return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+}
+
+function getAlertSeverityClass(severity) {
+  const s = (severity || "").toLowerCase();
+
+  if (s === "high") {
+    return "bg-red-500/15 text-red-300 border-red-500/30";
+  }
+  if (s === "medium") {
     return "bg-amber-500/15 text-amber-300 border-amber-500/30";
   }
   return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
@@ -231,7 +264,13 @@ function getPlatformAccent(platform) {
   };
 }
 
-function MetricCard({ title, value, sub, icon: Icon, accent = "text-amber-400" }) {
+function MetricCard({
+  title,
+  value,
+  sub,
+  icon: Icon,
+  accent = "text-amber-400",
+}) {
   return (
     <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
       <CardContent className="p-5">
@@ -263,6 +302,7 @@ export default function App() {
   const [heatmapData, setHeatmapData] = useState(fallbackHeatmap);
   const [topSurges, setTopSurges] = useState([]);
   const [predictions, setPredictions] = useState(fallbackPredictions);
+  const [alerts, setAlerts] = useState(fallbackAlerts);
 
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState("mock");
@@ -275,7 +315,9 @@ export default function App() {
   }, [latest, platform]);
 
   const regionOptions = useMemo(() => {
-    const unique = [...new Set(filteredByPlatform.map((r) => r.region))].filter(Boolean);
+    const unique = [...new Set(filteredByPlatform.map((r) => r.region))].filter(
+      Boolean
+    );
     return ["All", ...unique];
   }, [filteredByPlatform]);
 
@@ -298,6 +340,17 @@ export default function App() {
     return rows;
   }, [predictions, platform, region]);
 
+  const filteredAlerts = useMemo(() => {
+    let rows = alerts;
+    if (platform !== "All") {
+      rows = rows.filter((r) => r.platform === platform);
+    }
+    if (region !== "All") {
+      rows = rows.filter((r) => r.region === region);
+    }
+    return rows;
+  }, [alerts, platform, region]);
+
   const hero = useMemo(() => {
     if (filteredLatest.length > 0) {
       return [...filteredLatest].sort(
@@ -315,7 +368,9 @@ export default function App() {
   const heroPrediction = useMemo(() => {
     if (filteredPredictions.length > 0) {
       return [...filteredPredictions].sort(
-        (a, b) => Number(b.effective_orders_5min || 0) - Number(a.effective_orders_5min || 0)
+        (a, b) =>
+          Number(b.effective_orders_5min || 0) -
+          Number(a.effective_orders_5min || 0)
       )[0];
     }
     return fallbackPredictions[0];
@@ -338,20 +393,20 @@ export default function App() {
         typeof summary?.avg_fee === "number"
           ? summary.avg_fee.toFixed(1)
           : fees.length
-          ? (fees.reduce((a, b) => a + b, 0) / fees.length).toFixed(1)
-          : "0",
+            ? (fees.reduce((a, b) => a + b, 0) / fees.length).toFixed(1)
+            : "0",
       maxMult:
         typeof summary?.max_multiplier === "number"
           ? summary.max_multiplier.toFixed(1)
           : mults.length
-          ? Math.max(...mults).toFixed(1)
-          : "1.0",
+            ? Math.max(...mults).toFixed(1)
+            : "1.0",
       avgRatio:
         typeof summary?.avg_ds_ratio === "number"
           ? summary.avg_ds_ratio.toFixed(2)
           : ratios.length
-          ? (ratios.reduce((a, b) => a + b, 0) / ratios.length).toFixed(2)
-          : "0",
+            ? (ratios.reduce((a, b) => a + b, 0) / ratios.length).toFixed(2)
+            : "0",
     };
   }, [filteredLatest, filteredByPlatform, hero, summary]);
 
@@ -375,7 +430,13 @@ export default function App() {
   }, [heroPrediction]);
 
   const topLeaderboard = useMemo(() => {
-    const rows = topSurges.length > 0 ? topSurges : filteredLatest.length ? filteredLatest : filteredByPlatform;
+    const rows =
+      topSurges.length > 0
+        ? topSurges
+        : filteredLatest.length
+          ? filteredLatest
+          : filteredByPlatform;
+
     return [...rows]
       .sort((a, b) => Number(b.final_multiplier) - Number(a.final_multiplier))
       .slice(0, 3);
@@ -385,7 +446,8 @@ export default function App() {
     return [...filteredPredictions]
       .sort(
         (a, b) =>
-          Number(b.effective_orders_5min || 0) - Number(a.effective_orders_5min || 0)
+          Number(b.effective_orders_5min || 0) -
+          Number(a.effective_orders_5min || 0)
       )
       .slice(0, 5);
   }, [filteredPredictions]);
@@ -442,13 +504,15 @@ export default function App() {
   }, [topSurges, filteredLatest, platform, region]);
 
   const platformComparison = useMemo(() => {
-    const sourceRows = region === "All" ? latest : latest.filter((r) => r.region === region);
+    const sourceRows =
+      region === "All" ? latest : latest.filter((r) => r.region === region);
 
     const grouped = ["Swiggy", "Zomato", "Blinkit"].map((p) => {
       const rows = sourceRows.filter((r) => r.platform === p);
       const avg =
         rows.length > 0
-          ? rows.reduce((sum, r) => sum + Number(r.final_multiplier || 1), 0) / rows.length
+          ? rows.reduce((sum, r) => sum + Number(r.final_multiplier || 1), 0) /
+          rows.length
           : 0;
 
       return {
@@ -494,6 +558,22 @@ export default function App() {
     } catch (error) {
       setPredictions(fallbackPredictions);
       setPredictionStatus("mock");
+    }
+  };
+
+  const fetchAlerts = async () => {
+    try {
+      const res = await api.get("/alerts");
+      const rows = res.data?.data || [];
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        setAlerts(rows);
+      } else {
+        setAlerts(fallbackAlerts);
+      }
+    } catch (error) {
+      console.error("Alerts API fallback:", error);
+      setAlerts(fallbackAlerts);
     }
   };
 
@@ -553,14 +633,12 @@ export default function App() {
       const surgeRows = topSurgesRes.data?.data || [];
 
       if (historyRows.length > 1) {
-        const mapped = [...historyRows]
-          .reverse()
-          .map((x, i) => ({
-            tick: i + 1,
-            final_fee: Number(x.final_fee || 0),
-            final_multiplier: Number(x.final_multiplier || 1),
-            calculated_at: x.calculated_at,
-          }));
+        const mapped = [...historyRows].reverse().map((x, i) => ({
+          tick: i + 1,
+          final_fee: Number(x.final_fee || 0),
+          final_multiplier: Number(x.final_multiplier || 1),
+          calculated_at: x.calculated_at,
+        }));
 
         setHistory(mapped);
       } else {
@@ -568,6 +646,8 @@ export default function App() {
       }
 
       if (summaryData) setSummary(summaryData);
+      else setSummary(null);
+
       if (heatmapRows.length > 0) setHeatmapData(heatmapRows);
       else setHeatmapData(fallbackHeatmap);
 
@@ -575,6 +655,7 @@ export default function App() {
       else setTopSurges([]);
 
       await fetchPredictions();
+      await fetchAlerts();
 
       setApiStatus("live");
     } catch (error) {
@@ -584,9 +665,11 @@ export default function App() {
       setErrorMsg("API unavailable or unauthorized. Showing mock demo data.");
       setLatest(fallbackLatest);
       setHistory(fallbackHistory);
+      setSummary(null);
       setHeatmapData(fallbackHeatmap);
       setTopSurges([]);
       setPredictions(fallbackPredictions);
+      setAlerts(fallbackAlerts);
     } finally {
       setLoading(false);
     }
@@ -630,21 +713,19 @@ export default function App() {
                   </h1>
 
                   <Badge
-                    className={`rounded-full px-3 py-1 border font-semibold tracking-wide ${
-                      apiStatus === "live"
+                    className={`rounded-full px-3 py-1 border font-semibold tracking-wide ${apiStatus === "live"
                         ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                         : "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                    }`}
+                      }`}
                   >
                     {apiStatus === "live" ? "LIVE API" : "MOCK MODE"}
                   </Badge>
 
                   <Badge
-                    className={`rounded-full px-3 py-1 border font-semibold tracking-wide ${
-                      predictionStatus === "live"
+                    className={`rounded-full px-3 py-1 border font-semibold tracking-wide ${predictionStatus === "live"
                         ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
                         : "bg-zinc-500/15 text-zinc-300 border-zinc-500/30"
-                    }`}
+                      }`}
                   >
                     {predictionStatus === "live" ? "ML LIVE" : "ML FALLBACK"}
                   </Badge>
@@ -708,9 +789,8 @@ export default function App() {
             </Badge>
 
             <Badge
-              className={`rounded-full px-3 py-1 border ${
-                getPlatformAccent(hero?.platform).badge
-              }`}
+              className={`rounded-full px-3 py-1 border ${getPlatformAccent(hero?.platform).badge
+                }`}
             >
               {hero?.platform || "Unknown"}
             </Badge>
@@ -743,13 +823,13 @@ export default function App() {
                     Surge Anomaly Detected
                   </div>
                   <div className="text-white mt-1">
-                    {anomalyRow.platform} is spiking in{" "}
-                    <span className="font-semibold">{anomalyRow.region}</span>,{" "}
-                    {anomalyRow.city} at{" "}
+                    {hero?.platform} is spiking in{" "}
+                    <span className="font-semibold">{hero?.region}</span>,{" "}
+                    {hero?.city} at{" "}
                     <span className="font-semibold">
-                      {Number(anomalyRow.final_multiplier).toFixed(1)}x
+                      {Number(hero?.final_multiplier).toFixed(1)}x
                     </span>{" "}
-                    (₹{Math.round(Number(anomalyRow.final_fee))})
+                    (₹{Math.round(Number(hero?.final_fee))})
                   </div>
                 </div>
               </div>
@@ -792,7 +872,7 @@ export default function App() {
           />
         </div>
 
-        {/* NEW: ML Prediction KPI Cards */}
+        {/* ML Prediction KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
             title="Predicted next demand"
@@ -900,9 +980,8 @@ export default function App() {
                   <div className="text-zinc-400 text-xs">Active Platform</div>
                   <div className="mt-1 flex items-center gap-2">
                     <span
-                      className={`w-2.5 h-2.5 rounded-full ${
-                        getPlatformAccent(hero?.platform).dot
-                      }`}
+                      className={`w-2.5 h-2.5 rounded-full ${getPlatformAccent(hero?.platform).dot
+                        }`}
                     />
                     <span className="text-white font-semibold">{hero?.platform}</span>
                   </div>
@@ -961,7 +1040,7 @@ export default function App() {
           </Card>
         </div>
 
-        {/* NEW: Prediction Comparison + Top Risk Regions */}
+        {/* Prediction Comparison + Top Risk Regions */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
             <CardHeader>
@@ -1065,6 +1144,60 @@ export default function App() {
             </CardContent>
           </Card>
         </div>
+
+        {/* NEW: Live Alerts Feed */}
+        <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
+          <CardHeader>
+            <CardTitle className="text-zinc-100 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              Live Alerts Feed
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {filteredAlerts.length > 0 ? (
+                filteredAlerts.slice(0, 8).map((alert, idx) => (
+                  <div
+                    key={`${alert.platform}-${alert.region}-${alert.alert_type}-${idx}`}
+                    className="rounded-2xl bg-zinc-900/80 border border-zinc-700 px-4 py-3"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-white font-semibold">
+                            {alert.platform} • {alert.region}
+                          </span>
+
+                          <Badge
+                            className={`rounded-full px-3 py-1 border ${getAlertSeverityClass(
+                              alert.severity
+                            )}`}
+                          >
+                            {alert.severity}
+                          </Badge>
+
+                          <Badge className="rounded-full px-3 py-1 bg-zinc-800 text-zinc-200 border border-zinc-700">
+                            {alert.alert_type}
+                          </Badge>
+                        </div>
+
+                        <div className="text-zinc-300 text-sm">{alert.message}</div>
+
+                        <div className="text-zinc-500 text-xs">
+                          {alert.city} • {getRelativeTime(alert.created_at)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-400">
+                  No alerts right now.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Heatmap + Region Pricing */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -1322,7 +1455,10 @@ export default function App() {
                         {row.platform} • {row.region}
                       </div>
                       <div className="text-sm text-zinc-400">
-                        {row.city} • Updated {new Date(row.calculated_at).toLocaleTimeString()}
+                        {row.city} • Updated{" "}
+                        {row.calculated_at
+                          ? new Date(row.calculated_at).toLocaleTimeString()
+                          : "just now"}
                       </div>
                     </div>
 
@@ -1356,9 +1492,8 @@ export default function App() {
               <div className="rounded-2xl bg-zinc-900/90 border border-zinc-700/80 p-3.5 shadow-lg">
                 <div className="text-zinc-400 text-sm">API Status</div>
                 <div
-                  className={`text-xl font-bold mt-1 ${
-                    apiStatus === "live" ? "text-emerald-400" : "text-amber-400"
-                  }`}
+                  className={`text-xl font-bold mt-1 ${apiStatus === "live" ? "text-emerald-400" : "text-amber-400"
+                    }`}
                 >
                   {apiStatus === "live" ? "Connected" : "Fallback / Mock"}
                 </div>
@@ -1367,11 +1502,12 @@ export default function App() {
               <div className="rounded-2xl bg-zinc-900/90 border border-zinc-700/80 p-3.5 shadow-lg">
                 <div className="text-zinc-400 text-sm">ML Status</div>
                 <div
-                  className={`text-xl font-bold mt-1 ${
-                    predictionStatus === "live" ? "text-cyan-400" : "text-zinc-300"
-                  }`}
+                  className={`text-xl font-bold mt-1 ${predictionStatus === "live" ? "text-cyan-400" : "text-zinc-300"
+                    }`}
                 >
-                  {predictionStatus === "live" ? "Predictive Active" : "Prediction Fallback"}
+                  {predictionStatus === "live"
+                    ? "Predictive Active"
+                    : "Prediction Fallback"}
                 </div>
               </div>
 
@@ -1404,6 +1540,13 @@ export default function App() {
                   <span className="text-lg font-semibold text-white">
                     +{(((hero?.weather_multiplier || 1.04) - 1) * 100).toFixed(0)}%
                   </span>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-zinc-900/90 border border-zinc-700/80 p-3.5 shadow-lg">
+                <div className="text-zinc-400 text-sm">Alert Count</div>
+                <div className="text-2xl font-bold mt-1 text-white">
+                  {filteredAlerts.length}
                 </div>
               </div>
             </CardContent>

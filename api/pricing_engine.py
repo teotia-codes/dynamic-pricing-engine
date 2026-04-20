@@ -231,6 +231,56 @@ def get_risk_level(normalized_ratio):
 
 
 # =========================
+# Alert Helpers
+# =========================
+
+def should_create_alert(conn, platform_id, region_id, alert_type, dedupe_minutes=5):
+    """
+    Prevent spam: do not create same alert repeatedly within dedupe window.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT 1
+            FROM alerts
+            WHERE platform_id = %s
+              AND region_id = %s
+              AND alert_type = %s
+              AND created_at >= NOW() - (%s || ' minutes')::interval
+            LIMIT 1
+            """,
+            (platform_id, region_id, alert_type, dedupe_minutes),
+        )
+        return cur.fetchone() is None
+    finally:
+        cur.close()
+
+
+def insert_alerts(conn, alert_records):
+    if not alert_records:
+        return
+
+    cur = conn.cursor()
+    try:
+        insert_query = """
+        INSERT INTO alerts (
+            platform_id,
+            region_id,
+            alert_type,
+            message,
+            severity
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        cur.executemany(insert_query, alert_records)
+        conn.commit()
+        logger.info("Inserted %s alert records into alerts", len(alert_records))
+    finally:
+        cur.close()
+
+
+# =========================
 # Data Fetch
 # =========================
 
@@ -421,6 +471,7 @@ def calculate_prices():
         rows = fetch_latest_data(conn)
         pricing_records = []
         prediction_records = []
+        alert_records = []
 
         if not rows:
             logger.warning("No source data found from simulator tables.")
@@ -530,6 +581,32 @@ def calculate_prices():
                 round(final_fee, 2)
             ))
 
+            # =========================
+            # Alert Rules (with dedupe)
+            # =========================
+
+            # Rule 1: Extreme surge spike
+            if final_multiplier >= 2.5:
+                if should_create_alert(conn, platform_id, region_id, "SURGE_SPIKE", dedupe_minutes=5):
+                    alert_records.append((
+                        platform_id,
+                        region_id,
+                        "SURGE_SPIKE",
+                        f"Surge exceeded 2.5x (current={final_multiplier:.2f}x, fee=₹{final_fee:.2f})",
+                        "HIGH"
+                    ))
+
+            # Rule 2: High ML demand risk
+            if risk_level == "High":
+                if should_create_alert(conn, platform_id, region_id, "HIGH_RISK_DEMAND", dedupe_minutes=5):
+                    alert_records.append((
+                        platform_id,
+                        region_id,
+                        "HIGH_RISK_DEMAND",
+                        f"Predicted demand risk is HIGH (effective_orders_5min={effective_orders_5min:.2f}, ratio={ratio:.2f})",
+                        "MEDIUM"
+                    ))
+
             logger.info(
                 (
                     "Calculated price | platform_id=%s region_id=%s "
@@ -582,6 +659,9 @@ def calculate_prices():
             insert_pricing_output(conn, pricing_records)
         else:
             logger.warning("No pricing records generated in this cycle.")
+
+        if alert_records:
+            insert_alerts(conn, alert_records)
 
     except Exception:
         logger.exception("Pricing engine failed while calculating prices")

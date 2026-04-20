@@ -348,3 +348,52 @@ def fetch_latest_predictions(limit=15):
 
     finally:
         release_connection(conn)
+
+def create_alert(platform_id, region_id, alert_type, message, severity):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO alerts (
+                    platform_id,
+                    region_id,
+                    alert_type,
+                    message,
+                    severity
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (platform_id, region_id, alert_type, message, severity),
+            )
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+def fetch_alerts(limit=20):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    p.platform_name,
+                    r.region_name,
+                    r.city,
+                    a.alert_type,
+                    a.message,
+                    a.severity,
+                    a.created_at
+                FROM alerts a
+                JOIN platforms p ON a.platform_id = p.platform_id
+                JOIN regions r ON a.region_id = r.region_id
+                ORDER BY a.created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return rows
+    finally:
+        release_connection(conn)

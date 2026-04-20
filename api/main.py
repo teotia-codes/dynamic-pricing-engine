@@ -11,7 +11,8 @@ from api.repository import (
     fetch_dashboard_heatmap,
     fetch_dashboard_top_surges,
     check_database_health,
-    fetch_latest_predictions
+    fetch_latest_predictions,
+    fetch_alerts
 )
 from backend.app.logger import logger
 from backend.app.models import (
@@ -354,4 +355,36 @@ def dashboard_predictions(limit: int = Query(15, ge=1, le=50), _: str = Depends(
         }
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alerts")
+def get_alerts_endpoint(
+    limit: int = Query(20, ge=1, le=100),
+    _: str = Depends(verify_api_key),
+):
+    try:
+        rows = fetch_alerts(limit)
+
+        data = [
+            {
+                "platform": row[0],
+                "region": row[1],
+                "city": row[2],
+                "alert_type": row[3],
+                "message": row[4],
+                "severity": row[5],
+                "created_at": row[6].isoformat() if row[6] else None,
+            }
+            for row in rows
+        ]
+
+        return {
+            "status": "success",
+            "count": len(data),
+            "data": data
+        }
+
+    except Exception as e:
+        logger.exception("Failed to fetch alerts")
         raise HTTPException(status_code=500, detail=str(e))
