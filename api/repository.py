@@ -299,3 +299,52 @@ def check_database_health():
 
     finally:
         release_connection(conn)
+
+def fetch_latest_predictions(limit=15):
+    conn = get_connection()
+
+    try:
+        cur = conn.cursor()
+
+        query = """
+        WITH latest_per_combo AS (
+            SELECT DISTINCT ON (platform_id, region_id)
+                platform_id,
+                region_id,
+                current_orders_5min,
+                predicted_orders_next_bucket,
+                effective_orders_5min,
+                risk_level,
+                predicted_at
+            FROM predicted_demand_output
+            ORDER BY platform_id, region_id, predicted_at DESC
+        )
+        SELECT
+            p.platform_name,
+            r.region_name,
+            r.city,
+            l.current_orders_5min,
+            l.predicted_orders_next_bucket,
+            l.effective_orders_5min,
+            l.risk_level,
+            l.predicted_at
+        FROM latest_per_combo l
+        JOIN platforms p ON l.platform_id = p.platform_id
+        JOIN regions r ON l.region_id = r.region_id
+        ORDER BY
+            CASE l.risk_level
+                WHEN 'High' THEN 1
+                WHEN 'Medium' THEN 2
+                ELSE 3
+            END,
+            l.predicted_orders_next_bucket DESC
+        LIMIT %s;
+        """
+
+        cur.execute(query, (limit,))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    finally:
+        release_connection(conn)

@@ -157,3 +157,19 @@ class DashboardTopSurgesResponse(BaseModel):
     status: str
     count: int
     data: List[DashboardTopSurgeItem]
+
+class PredictionItem(BaseModel):
+    platform: str
+    region: str
+    city: str
+    current_orders_5min: float
+    predicted_orders_next_bucket: float
+    effective_orders_5min: float
+    risk_level: str
+    predicted_at: Optional[str]
+
+
+class PredictionsResponse(BaseModel):
+    status: str
+    count: int
+    data: List[PredictionItem]

@@ -25,6 +25,8 @@ import {
   MapPinned,
   Building2,
   AlertTriangle,
+  BrainCircuit,
+  ShieldAlert,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -136,12 +138,56 @@ const fallbackHeatmap = [
   value: v,
 }));
 
+const fallbackPredictions = [
+  {
+    platform: "Swiggy",
+    region: "Andheri West",
+    city: "Mumbai",
+    current_orders_5min: 175,
+    predicted_orders_next_bucket: 53.18,
+    effective_orders_5min: 206.81,
+    risk_level: "High",
+    predicted_at: new Date().toISOString(),
+  },
+  {
+    platform: "Zomato",
+    region: "Sector 18",
+    city: "Noida",
+    current_orders_5min: 92,
+    predicted_orders_next_bucket: 22.4,
+    effective_orders_5min: 103.2,
+    risk_level: "Medium",
+    predicted_at: new Date().toISOString(),
+  },
+  {
+    platform: "Blinkit",
+    region: "HSR Layout",
+    city: "Bengaluru",
+    current_orders_5min: 61,
+    predicted_orders_next_bucket: 12.6,
+    effective_orders_5min: 67.3,
+    risk_level: "Low",
+    predicted_at: new Date().toISOString(),
+  },
+];
+
 // ------------------ HELPERS ------------------
 function getMultiplierColor(value) {
   if (value >= 2.3) return "bg-red-500/90 text-white";
   if (value >= 1.7) return "bg-amber-500/90 text-black";
   if (value >= 1.2) return "bg-lime-300/90 text-black";
   return "bg-sky-300/90 text-black";
+}
+
+function getRiskBadgeClass(risk) {
+  const r = (risk || "").toLowerCase();
+  if (r === "high") {
+    return "bg-red-500/15 text-red-300 border-red-500/30";
+  }
+  if (r === "medium") {
+    return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+  }
+  return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
 }
 
 function getRelativeTime(isoString) {
@@ -216,9 +262,11 @@ export default function App() {
   const [summary, setSummary] = useState(null);
   const [heatmapData, setHeatmapData] = useState(fallbackHeatmap);
   const [topSurges, setTopSurges] = useState([]);
+  const [predictions, setPredictions] = useState(fallbackPredictions);
 
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState("mock");
+  const [predictionStatus, setPredictionStatus] = useState("mock");
   const [errorMsg, setErrorMsg] = useState("");
 
   const filteredByPlatform = useMemo(() => {
@@ -239,6 +287,17 @@ export default function App() {
     return rows;
   }, [filteredByPlatform, region]);
 
+  const filteredPredictions = useMemo(() => {
+    let rows = predictions;
+    if (platform !== "All") {
+      rows = rows.filter((r) => r.platform === platform);
+    }
+    if (region !== "All") {
+      rows = rows.filter((r) => r.region === region);
+    }
+    return rows;
+  }, [predictions, platform, region]);
+
   const hero = useMemo(() => {
     if (filteredLatest.length > 0) {
       return [...filteredLatest].sort(
@@ -252,6 +311,15 @@ export default function App() {
     }
     return fallbackLatest[0];
   }, [filteredLatest, filteredByPlatform]);
+
+  const heroPrediction = useMemo(() => {
+    if (filteredPredictions.length > 0) {
+      return [...filteredPredictions].sort(
+        (a, b) => Number(b.effective_orders_5min || 0) - Number(a.effective_orders_5min || 0)
+      )[0];
+    }
+    return fallbackPredictions[0];
+  }, [filteredPredictions]);
 
   const kpis = useMemo(() => {
     const sourceRows = filteredLatest.length > 0 ? filteredLatest : filteredByPlatform;
@@ -302,12 +370,35 @@ export default function App() {
     return getRelativeTime(hero?.calculated_at);
   }, [hero]);
 
+  const predictionFreshnessText = useMemo(() => {
+    return getRelativeTime(heroPrediction?.predicted_at);
+  }, [heroPrediction]);
+
   const topLeaderboard = useMemo(() => {
     const rows = topSurges.length > 0 ? topSurges : filteredLatest.length ? filteredLatest : filteredByPlatform;
     return [...rows]
       .sort((a, b) => Number(b.final_multiplier) - Number(a.final_multiplier))
       .slice(0, 3);
   }, [topSurges, filteredLatest, filteredByPlatform]);
+
+  const topRiskRegions = useMemo(() => {
+    return [...filteredPredictions]
+      .sort(
+        (a, b) =>
+          Number(b.effective_orders_5min || 0) - Number(a.effective_orders_5min || 0)
+      )
+      .slice(0, 5);
+  }, [filteredPredictions]);
+
+  const predictionComparisonData = useMemo(() => {
+    const rows = topRiskRegions.length > 0 ? topRiskRegions : filteredPredictions;
+    return rows.slice(0, 5).map((r) => ({
+      name: `${r.platform} - ${r.region}`,
+      current: Number(r.current_orders_5min || 0),
+      predicted: Number(r.predicted_orders_next_bucket || 0),
+      effective: Number(r.effective_orders_5min || 0),
+    }));
+  }, [topRiskRegions, filteredPredictions]);
 
   const factorCards = [
     {
@@ -370,6 +461,42 @@ export default function App() {
     return grouped;
   }, [latest, region]);
 
+  const fetchPredictions = async () => {
+    try {
+      const possibleEndpoints = [
+        "/dashboard/predictions",
+        "/predictions",
+        "/predicted-demand",
+      ];
+
+      let predictionRows = null;
+
+      for (const endpoint of possibleEndpoints) {
+        try {
+          const res = await api.get(endpoint);
+          const rows = res.data?.data || res.data || [];
+          if (Array.isArray(rows) && rows.length > 0) {
+            predictionRows = rows;
+            break;
+          }
+        } catch (err) {
+          // try next endpoint
+        }
+      }
+
+      if (predictionRows && predictionRows.length > 0) {
+        setPredictions(predictionRows);
+        setPredictionStatus("live");
+      } else {
+        setPredictions(fallbackPredictions);
+        setPredictionStatus("mock");
+      }
+    } catch (error) {
+      setPredictions(fallbackPredictions);
+      setPredictionStatus("mock");
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setErrorMsg("");
@@ -383,18 +510,35 @@ export default function App() {
       const latestRes = await api.get(latestUrl);
       const latestRows = latestRes.data?.data || [];
 
-      if (latestRows.length > 0) {
-        setLatest(latestRows);
+      const latestData = latestRows.length > 0 ? latestRows : fallbackLatest;
+      setLatest(latestData);
+
+      let candidateRows = latestData;
+
+      if (platform !== "All") {
+        candidateRows = candidateRows.filter((r) => r.platform === platform);
       }
 
-      const historySource = latestRows.length > 0 ? latestRows : fallbackLatest;
-      const historyRow =
-        region !== "All"
-          ? historySource.find((r) => r.region === region) || historySource[0]
-          : historySource[0];
+      if (region !== "All") {
+        candidateRows = candidateRows.filter((r) => r.region === region);
+      }
 
-      const regionEncoded = encodeURIComponent(historyRow.region || "Connaught Place");
-      const histPlatform = encodeURIComponent(historyRow.platform || "Swiggy");
+      if (!candidateRows.length) {
+        if (platform !== "All") {
+          candidateRows = latestData.filter((r) => r.platform === platform);
+        }
+      }
+
+      if (!candidateRows.length) {
+        candidateRows = latestData;
+      }
+
+      const historyRow = [...candidateRows].sort(
+        (a, b) => Number(b.final_multiplier) - Number(a.final_multiplier)
+      )[0];
+
+      const regionEncoded = encodeURIComponent(historyRow?.region || "Connaught Place");
+      const histPlatform = encodeURIComponent(historyRow?.platform || "Swiggy");
 
       const [historyRes, summaryRes, heatmapRes, topSurgesRes] = await Promise.all([
         api.get(`/history/${histPlatform}/${regionEncoded}?limit=30`),
@@ -408,15 +552,15 @@ export default function App() {
       const heatmapRows = heatmapRes.data?.data || [];
       const surgeRows = topSurgesRes.data?.data || [];
 
-      if (historyRows.length > 0) {
-        const mapped = historyRows
+      if (historyRows.length > 1) {
+        const mapped = [...historyRows]
+          .reverse()
           .map((x, i) => ({
             tick: i + 1,
-            final_fee: x.final_fee,
-            final_multiplier: x.final_multiplier,
+            final_fee: Number(x.final_fee || 0),
+            final_multiplier: Number(x.final_multiplier || 1),
             calculated_at: x.calculated_at,
-          }))
-          .reverse();
+          }));
 
         setHistory(mapped);
       } else {
@@ -430,14 +574,19 @@ export default function App() {
       if (surgeRows.length > 0) setTopSurges(surgeRows);
       else setTopSurges([]);
 
+      await fetchPredictions();
+
       setApiStatus("live");
     } catch (error) {
       console.error("Dashboard API fallback:", error);
       setApiStatus("mock");
+      setPredictionStatus("mock");
       setErrorMsg("API unavailable or unauthorized. Showing mock demo data.");
+      setLatest(fallbackLatest);
       setHistory(fallbackHistory);
       setHeatmapData(fallbackHeatmap);
       setTopSurges([]);
+      setPredictions(fallbackPredictions);
     } finally {
       setLoading(false);
     }
@@ -488,6 +637,16 @@ export default function App() {
                     }`}
                   >
                     {apiStatus === "live" ? "LIVE API" : "MOCK MODE"}
+                  </Badge>
+
+                  <Badge
+                    className={`rounded-full px-3 py-1 border font-semibold tracking-wide ${
+                      predictionStatus === "live"
+                        ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                        : "bg-zinc-500/15 text-zinc-300 border-zinc-500/30"
+                    }`}
+                  >
+                    {predictionStatus === "live" ? "ML LIVE" : "ML FALLBACK"}
                   </Badge>
                 </div>
 
@@ -542,6 +701,10 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-3">
             <Badge className="rounded-full px-3 py-1 bg-zinc-900 border border-zinc-700 text-zinc-300">
               Updated {freshnessText}
+            </Badge>
+
+            <Badge className="rounded-full px-3 py-1 bg-zinc-900 border border-zinc-700 text-zinc-300">
+              Prediction {predictionFreshnessText}
             </Badge>
 
             <Badge
@@ -627,6 +790,48 @@ export default function App() {
             icon={Truck}
             accent="text-sky-400"
           />
+        </div>
+
+        {/* NEW: ML Prediction KPI Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <MetricCard
+            title="Predicted next demand"
+            value={Math.round(Number(heroPrediction?.predicted_orders_next_bucket || 0))}
+            sub="Next 5-min bucket forecast"
+            icon={BrainCircuit}
+            accent="text-cyan-400"
+          />
+          <MetricCard
+            title="Effective demand"
+            value={Math.round(Number(heroPrediction?.effective_orders_5min || 0))}
+            sub="Blended current + forecast"
+            icon={Activity}
+            accent="text-violet-400"
+          />
+          <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-zinc-400 text-sm font-medium">Risk level</p>
+                  <div className="mt-3">
+                    <Badge
+                      className={`rounded-full px-4 py-2 text-sm border ${getRiskBadgeClass(
+                        heroPrediction?.risk_level
+                      )}`}
+                    >
+                      {heroPrediction?.risk_level || "Low"}
+                    </Badge>
+                  </div>
+                  <p className="text-zinc-400 text-sm mt-3">
+                    ML-based surge risk classification
+                  </p>
+                </div>
+                <div className="p-3 rounded-2xl bg-zinc-800/80 text-red-400">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Signals + Surge Breakdown */}
@@ -756,6 +961,111 @@ export default function App() {
           </Card>
         </div>
 
+        {/* NEW: Prediction Comparison + Top Risk Regions */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-zinc-100 flex items-center gap-2">
+                <BrainCircuit className="w-5 h-5 text-cyan-400" />
+                Current vs Predicted Demand
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={predictionComparisonData}>
+                    <CartesianGrid stroke="#27272a" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      stroke="#a1a1aa"
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                      angle={-15}
+                      textAnchor="end"
+                      height={60}
+                    />
+                    <YAxis stroke="#a1a1aa" />
+                    <Tooltip
+                      contentStyle={{
+                        background: "#18181b",
+                        border: "1px solid #3f3f46",
+                        borderRadius: 16,
+                        color: "#ffffff",
+                      }}
+                    />
+                    <Bar dataKey="current" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="predicted" fill="#06b6d4" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="effective" fill="#a855f7" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
+            <CardHeader>
+              <CardTitle className="text-zinc-100 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-red-400" />
+                Top Risk Regions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {topRiskRegions.length > 0 ? (
+                  topRiskRegions.map((row, idx) => (
+                    <div
+                      key={`${row.platform}-${row.region}-${idx}`}
+                      className="rounded-2xl bg-zinc-900/80 border border-zinc-700 px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-white font-semibold">
+                            {row.platform} • {row.region}
+                          </div>
+                          <div className="text-zinc-400 text-sm">{row.city}</div>
+                        </div>
+
+                        <Badge
+                          className={`rounded-full px-3 py-1 border ${getRiskBadgeClass(
+                            row.risk_level
+                          )}`}
+                        >
+                          {row.risk_level}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
+                        <div>
+                          <div className="text-zinc-500">Current</div>
+                          <div className="text-white font-bold">
+                            {Math.round(Number(row.current_orders_5min || 0))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-zinc-500">Predicted</div>
+                          <div className="text-cyan-300 font-bold">
+                            {Math.round(Number(row.predicted_orders_next_bucket || 0))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-zinc-500">Effective</div>
+                          <div className="text-violet-300 font-bold">
+                            {Math.round(Number(row.effective_orders_5min || 0))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-400">
+                    No prediction rows available.
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Heatmap + Region Pricing */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card className="bg-zinc-950/90 border-zinc-800 rounded-3xl shadow-2xl">
@@ -850,13 +1160,27 @@ export default function App() {
             </Badge>
           </CardHeader>
           <CardContent>
+            <div className="mb-3 text-sm text-zinc-400">
+              Tracking: <span className="text-white font-medium">{hero?.platform}</span> •{" "}
+              <span className="text-white font-medium">{hero?.region}</span>
+            </div>
+
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={history}>
                   <CartesianGrid stroke="#27272a" vertical={false} />
                   <XAxis dataKey="tick" stroke="#a1a1aa" />
-                  <YAxis stroke="#a1a1aa" domain={[0.8, "dataMax + 0.5"]} />
+                  <YAxis
+                    stroke="#a1a1aa"
+                    domain={[
+                      (dataMin) => Math.max(0.8, Number((dataMin - 0.2).toFixed(2))),
+                      (dataMax) => Number((dataMax + 0.3).toFixed(2)),
+                    ]}
+                    allowDataOverflow={false}
+                  />
                   <Tooltip
+                    formatter={(value) => [`${Number(value).toFixed(2)}x`, "Multiplier"]}
+                    labelFormatter={(label) => `Tick ${label}`}
                     contentStyle={{
                       background: "#18181b",
                       border: "1px solid #3f3f46",
@@ -869,7 +1193,8 @@ export default function App() {
                     dataKey="final_multiplier"
                     stroke="#f59e0b"
                     strokeWidth={3}
-                    dot={false}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 5 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -1036,6 +1361,17 @@ export default function App() {
                   }`}
                 >
                   {apiStatus === "live" ? "Connected" : "Fallback / Mock"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-zinc-900/90 border border-zinc-700/80 p-3.5 shadow-lg">
+                <div className="text-zinc-400 text-sm">ML Status</div>
+                <div
+                  className={`text-xl font-bold mt-1 ${
+                    predictionStatus === "live" ? "text-cyan-400" : "text-zinc-300"
+                  }`}
+                >
+                  {predictionStatus === "live" ? "Predictive Active" : "Prediction Fallback"}
                 </div>
               </div>
 

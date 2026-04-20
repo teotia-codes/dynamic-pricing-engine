@@ -11,6 +11,7 @@ from api.repository import (
     fetch_dashboard_heatmap,
     fetch_dashboard_top_surges,
     check_database_health,
+    fetch_latest_predictions
 )
 from backend.app.logger import logger
 from backend.app.models import (
@@ -325,4 +326,32 @@ def dashboard_top_surges(
 
     except Exception as e:
         logger.exception("Failed to fetch dashboard top surges")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/dashboard/predictions")
+def dashboard_predictions(limit: int = Query(15, ge=1, le=50), _: str = Depends(verify_api_key)):
+    try:
+        rows = fetch_latest_predictions(limit)
+
+        data = [
+            {
+                "platform": row[0],
+                "region": row[1],
+                "city": row[2],
+                "current_orders_5min": float(row[3]),
+                "predicted_orders_next_bucket": float(row[4]),
+                "effective_orders_5min": float(row[5]),
+                "risk_level": row[6],
+                "predicted_at": row[7].isoformat() if row[7] else None,
+            }
+            for row in rows
+        ]
+
+        return {
+            "status": "success",
+            "count": len(data),
+            "data": data
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
